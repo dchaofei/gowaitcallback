@@ -12,20 +12,25 @@ waitcallback-go
 =======
 
 ```go
-waitCallback := NewCallback()
-wg := sync.WaitGroup{}
-wg.Add(2)
-key := "ding"
-value := "dong"
-go func () {
-	defer wg.Done()
-	got := waitCallback.PushWait(key)
-	fmt.Println(got)
-}()
-time.Sleep(time.Millisecond)
-go func () {
-	defer wg.Done()
-	waitCallback.Resolve(key, value)
-}()
-wg.Wait()
+	waitCallback := NewCallback()
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+	key := "ding"
+	value := "dong"
+	go func() {
+		defer wg.Done()
+		got := waitCallback.PushWait(context.Background(), key)
+		fmt.Println(got)
+	}()
+
+	// 真实场景应该在其他地方异步调 waitCallback.Resolve(key, value)
+	{
+		time.Sleep(time.Millisecond)
+		go func() {
+			defer wg.Done()
+			waitCallback.Resolve(key, value)
+		}()
+	}
+
+	wg.Wait()
 ```

@@ -8,7 +8,8 @@ import (
 
 // WaitCallback 等待Callback的结构体
 type WaitCallback struct {
-	valMap sync.Map
+	valMap map[interface{}]interface{}
+	rwMu   sync.RWMutex
 }
 
 type wrapValue struct {
@@ -17,19 +18,31 @@ type wrapValue struct {
 }
 
 func NewCallback() *WaitCallback {
-	return &WaitCallback{}
+	return &WaitCallback{valMap: map[interface{}]interface{}{}}
 }
 
-func (c *WaitCallback) pushWait(ctx context.Context, key interface{}) interface{} {
+// PushWait 阻塞到key被回调返回值或者context超时结束
+func (c *WaitCallback) PushWait(ctx context.Context, key interface{}) interface{} {
 	var wrValue *wrapValue
-	value, ok := c.valMap.Load(key)
+	c.rwMu.RLock()
+	value, ok := c.valMap[key]
+	c.rwMu.RUnlock()
 	if ok {
 		wrValue = value.(*wrapValue)
 	} else {
-		wrValue = &wrapValue{
-			ch: make(chan struct{}),
+		c.rwMu.Lock()
+		// 双重检查
+		value, ok := c.valMap[key]
+		if ok {
+			wrValue = value.(*wrapValue)
+			c.rwMu.Unlock()
+		} else {
+			wrValue = &wrapValue{
+				ch: make(chan struct{}),
+			}
+			c.valMap[key] = wrValue
+			c.rwMu.Unlock()
 		}
-		c.valMap.Store(key, wrValue)
 	}
 	select {
 	case <-wrValue.ch:
@@ -39,24 +52,16 @@ func (c *WaitCallback) pushWait(ctx context.Context, key interface{}) interface{
 	}
 }
 
-// PushWait 阻塞一直到key被回调返回值
-func (c *WaitCallback) PushWait(key interface{}) interface{} {
-	return c.pushWait(context.Background(), key)
-}
-
-// PushWaitWithContext 阻塞到key被回调返回值或者context超时结束
-func (c *WaitCallback) PushWaitWithContext(ctx context.Context, key interface{}) interface{} {
-	return c.pushWait(ctx, key)
-}
-
 // Resolve 填充key对应的值并利用close(ch)广播通知
 func (c *WaitCallback) Resolve(key interface{}, value interface{}) {
-	v, ok := c.valMap.Load(key)
+	c.rwMu.RLock()
+	v, ok := c.valMap[key]
+	c.rwMu.RUnlock()
 	if !ok {
 		return
 	}
 	wrValue := v.(*wrapValue)
 	wrValue.value = value
-	c.valMap.Delete(key)
+	delete(c.valMap, key)
 	close(wrValue.ch)
 }
